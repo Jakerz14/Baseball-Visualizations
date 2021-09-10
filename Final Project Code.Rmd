@@ -1,0 +1,259 @@
+---
+title: "Final Project"
+author: "Group 5"
+date: "4/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Reading in the Data and Loading Packages
+
+```{r message= FALSE, warning = FALSE}
+library(tidyverse)
+library(readxl)
+library(corrplot)
+library(reshape2)
+library(caret)
+library(vip)
+library(ROCR)
+library(rsample)
+library(rpart)
+library(RColorBrewer)
+library(rattle)
+
+beans = read_excel('../Data/Dry_Bean_Dataset.xlsx')
+```
+
+
+### Getting the Distribution for Frequency of each Bean Type
+```{r warning = FALSE}
+ggplot(beans, aes(Class, fill = Class)) + 
+  geom_bar() +
+  geom_text(aes(label=scales::percent(..prop..), 
+                group=1),
+    stat='count',
+    nudge_y=30,
+    va='top',
+    format_string='{:.1f}%')+
+  theme_bw() +
+  labs(title = "Beans Classification", 
+       x = "Class") +
+  theme(plot.title = element_text(hjust = .5))
+```
+
+
+### Plotting Boxplots for the Variables
+
+```{r message = FALSE}
+beans2 = beans %>% 
+# Select numeric and ordinal (levels>3) variables
+select_if(function(col) is.numeric(col)|
+              is.ordered(col)) %>% 
+#Convert ordinal to numeric
+mutate_if(is.ordered, as.integer)
+
+melt_df=melt(beans2)
+
+ggplot(melt_df, aes(x=variable, y=value)) + 
+  geom_boxplot()+
+  facet_wrap(~variable, scale="free")
+```
+
+### kNN Model
+
+#### Setting Training and Testing Sets 
+
+This is for our first kNN model with no data standardization. 
+
+```{r}
+set.seed(123)
+
+index = createDataPartition(beans$Class, p = 0.8, list = FALSE)
+
+train_knn = beans[index, ]
+test_knn = beans[-index, ]
+```
+
+#### Creating the model and timing it
+
+```{r}
+start_time = Sys.time()
+cv = trainControl(method = "repeatedcv", 
+                   repeats = 5)
+
+knn_norm = train(
+  Class ~ .,
+  data = train_knn,
+  method = "knn",
+  trControl = cv,
+  tuneLength = 20
+)
+end_time = Sys.time()
+end_time - start_time
+```
+
+#### Getting the Confusion Matrix for the Model
+
+```{r}
+knnPredict = predict(knn_norm, newdata = test_knn)
+pred_class = as.factor(knnPredict)
+(conf_random=confusionMatrix(pred_class, as.factor(test_knn$Class)))
+```
+
+#### Standardizing the Data Except ShapeFactor2 for Model 2
+
+```{r warning=FALSE, message=FALSE}
+vars = names(beans[-14])[sapply(beans[-14], is.numeric)] 
+### ShapeFactor2 is the 14th column of the data
+pre_pro = preProcess(beans %>% 
+                        select(vars), method = c('center', 'scale'))
+risk_processed2 = predict(pre_pro, beans)
+
+```
+
+#### Creating a Split with Standardized Data for Model 2
+
+```{r}
+set.seed(123)
+
+split2 = initial_split(risk_processed2, prop = .8)
+train_norm2 = training(split2)
+test_norm2 = testing(split2)
+```
+
+#### Creating and Timing Model 2
+
+```{r}
+start_time = Sys.time()
+cv = trainControl(method = "repeatedcv", 
+                   repeats = 5)
+
+knn_norm_data2 = train(
+  Class ~ .,
+  data = train_norm2,
+  method = "knn",
+  trControl = cv,
+  tuneLength = 20
+)
+end_time = Sys.time()
+end_time - start_time
+```
+
+#### Obtaining the Confusion Matrix for Model 2
+
+```{r}
+knnPredict = predict(knn_norm_data2, newdata = test_norm2)
+pred_class = as.factor(knnPredict)
+(conf_random=confusionMatrix(pred_class, as.factor(test_norm2$Class)))
+```
+
+#### Standardizing all of the Data for the Final kNN Model
+
+```{r warning=FALSE}
+vars = names(beans)[sapply(beans, is.numeric)]
+
+pre_pro = preProcess(beans %>% 
+                        select(vars), method = c('center', 'scale'))
+risk_processed = predict(pre_pro, beans)
+```
+
+#### Creating Training and Testing Sets for the Final Model
+
+```{r}
+set.seed(123)
+
+split = initial_split(risk_processed, prop = .8)
+train_norm = training(split)
+test_norm = testing(split)
+```
+
+#### Creating and Timing the Final Model
+
+```{r}
+start_time = Sys.time()
+cv = trainControl(method = "repeatedcv", 
+                   repeats = 5)
+
+knn_norm_data = train(
+  Class ~ .,
+  data = train_norm,
+  method = "knn",
+  trControl = cv,
+  tuneLength = 20
+)
+end_time = Sys.time()
+end_time - start_time
+```
+
+#### Obtaining the Confusion Matrix for the Final Model
+
+```{r}
+knnPredict = predict(knn_norm_data, newdata = test_norm)
+pred_class = as.factor(knnPredict)
+(conf_random=confusionMatrix(pred_class, as.factor(test_norm$Class)))
+```
+
+### LDA Model
+
+```{r message=FALSE, warning=FALSE}
+library(MASS)
+set.seed(123)  # for reproducibility
+index <- createDataPartition(beans$Class, p = 0.8,
+                             list = FALSE)
+train <-beans[index, ]
+test  <- beans[-index, ]
+
+# Fit the model
+lda_fit <- lda(Class~., data = train)
+lda_fit
+
+# Make prediction using the fitted model on test data
+pred_test<-predict(lda_fit, test)
+
+# Extract predicted class
+pred_class<-as.factor(pred_test$class)
+
+#Confusion Matrix
+confusionMatrix(pred_class, as.factor(test$Class))
+ 
+
+```
+
+### QDA Model
+
+```{r}
+set.seed(123)
+indxTrain <- beans$Class %>%
+  createDataPartition(p = 0.80, list = FALSE)
+train <- beans[indxTrain, ]
+test <- beans[-indxTrain, ]
+
+qda_fit = qda(Class~., data = train)
+pred_test<-predict(qda_fit, test)
+pred_class<-as.factor(pred_test$class)
+confusionMatrix(pred_class, as.factor(test$Class))
+
+```
+
+### Decision Tree
+
+```{r}
+tree_beans <- rpart(Class ~ ., 
+                       data = train,
+                      method="class")
+print(tree_beans)
+
+fancyRpartPlot(tree_beans, 
+               palette="RdYlGn", 
+               sub=" ")
+ColNum <- grep("Class",names(test))
+
+# Make prediction using the fitted model on test data
+rpart_predict <- predict(tree_beans,test[,-ColNum],type="class")
+#Confusion Matrix
+confusionMatrix(rpart_predict, as.factor(test$Class))
+
+```
